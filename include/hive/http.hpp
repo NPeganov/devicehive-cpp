@@ -2158,7 +2158,7 @@ private:
             const String hconn = task->response
                                ? task->response->getHeader(http::header::Connection)
                                : String();
-            if (boost::iequals(hconn, "keep-alive")) // TODO: or !boost::iequals(hconn, "close")
+            if (!boost::iequals(hconn, "close")) // TODO: or boost::iequals(hconn, "keep-alive")
             {
                 m_connCache.push_back(pconn);
                 HIVELOG_DEBUG(m_log, "Task{" << task.get()
@@ -2397,6 +2397,7 @@ private:
 #if !defined(HIVE_DISABLE_SSL)
             if (!(task->m_connection = findCachedConnection(epi->endpoint(), true)))
             {
+                m_context.set_options(boost::asio::ssl::context::default_workarounds);
                 Connection::Secure::SharedPtr conn = Connection::Secure::create(m_ios, m_context);
                 conn->getStream().set_verify_mode(boost::asio::ssl::verify_none); // TODO: boost::asio::ssl::verify_peer
                 conn->getStream().set_verify_callback(
