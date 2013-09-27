@@ -697,6 +697,7 @@ private:
 const char Host[]               = "Host";               ///< @hideinitializer @brief The "Host" header name.
 const char Allow[]              = "Allow";              ///< @hideinitializer @brief The "Allow" header name.
 const char Accept[]             = "Accept";             ///< @hideinitializer @brief The "Accept" header name.
+const char Accept_Encoding[]    = "Accept-Encoding";    ///< @hideinitializer @brief The "Accept-Encoding" header name.
 const char Connection[]         = "Connection";         ///< @hideinitializer @brief The "Connection" header name.
 const char Content_Encoding[]   = "Content-Encoding";   ///< @hideinitializer @brief The "Content-Encoding" header name.
 const char Content_Length[]     = "Content-Length";     ///< @hideinitializer @brief The "Content-Length" header name.
@@ -709,6 +710,7 @@ const char Upgrade[]            = "Upgrade";            ///< @hideinitializer @b
 const char Authorization[]      = "Authorization";      ///< @hideinitializer @brief The "Authorization" header name.
 const char SetCookie[]          = "Set-Cookie";         ///< @hideinitializer @brief The "Set-Cookie" header name.
 const char Cookie[]             = "Cookie";             ///< @hideinitializer @brief The "Cookie" header name.
+const char Proxy_Connection[]   = "Proxy-Connection";   ///< @hideinitializer @brief The "Proxy-Connection" header name.
 
         // TODO: add more headers here
 
@@ -2160,11 +2162,25 @@ private:
                                : String();
             if (!boost::iequals(hconn, "close")) // TODO: or boost::iequals(hconn, "keep-alive")
             {
-                m_connCache.push_back(pconn);
-                HIVELOG_DEBUG(m_log, "Task{" << task.get()
-                    << "} - keep-alive Connection{"
-                    << pconn.get() << "} is cached");
-                asyncStartKeepAliveMonitor(pconn);
+                ConnList::iterator conn_it = findCachedConnection(pconn->remote_endpoint());
+                String const& proto = task->request->getUrl().getProtocol();
+                const bool isConnectionSequre = boost::iequals(proto, "https") || boost::iequals(proto, "wss");
+                if(conn_it == m_connCache.end())
+                {
+                    m_connCache.push_back(pconn);
+                    HIVELOG_DEBUG(m_log, "Task{" << task.get()
+                        << "} - keep-alive Connection{"
+                        << pconn.get() << "} is cached");
+                    asyncStartKeepAliveMonitor(pconn);
+                }
+                else
+                {
+                    HIVELOG_DEBUG(m_log, "Task{" << task.get()
+                        << "} Connection for endpoint {" 
+                        << pconn->remote_endpoint() << "} is already in cache. Connection{"
+                        << pconn.get() << "} will be closed.");
+                    pconn->close();
+                }
             }
         }
     }
@@ -2342,11 +2358,10 @@ private:
     /// @brief Find cached connection.
     /**
     @param[in] endpoint The endpoint to find connection for.
-    @param[in] secure `true` for secure connections.
-    @return A connection or `NULL`.
+    @return A connection iterator or `m_connCache.end()`.
     */
-    ConnectionPtr findCachedConnection(Connection::Endpoint endpoint, bool secure)
-    {
+    std::list<ConnectionPtr>::iterator findCachedConnection(Connection::Endpoint endpoint)
+    {        
         ConnList::iterator i = m_connCache.begin();
         ConnList::iterator e = m_connCache.end();
         for (; i != e; ++i)
@@ -2354,32 +2369,47 @@ private:
             ConnectionPtr pconn = *i;
             if (pconn->remote_endpoint() == endpoint)
             {
-#if !defined(HIVE_DISABLE_SSL)
-                if (secure)
-                {
-                    if (boost::dynamic_pointer_cast<Connection::Secure>(pconn))
-                    {
-                        m_connCache.erase(i);
-                        pconn->cancel(); // stop monitor
-                        return pconn;
-                    }
-                }
-                else
-#endif // HIVE_DISABLE_SSL
-                {
-                    if (boost::dynamic_pointer_cast<Connection::Simple>(pconn))
-                    {
-                        m_connCache.erase(i);
-                        pconn->cancel(); // stop monitor
-                        return pconn;
-                    }
-                }
+                return i;
             }
         }
 
-        return ConnectionPtr(); // not found
+        return i; // not found
     }
 
+
+    /// @brief Find cached connection.
+    /**
+    @param[in] endpoint The endpoint to find connection for.
+    @param[in] secure `true` for secure connections.
+    @return A connection or `NULL`.
+    */
+    ConnectionPtr takeConnectionFromCache(std::list<ConnectionPtr>::iterator conn_it, bool secure)
+    {
+        if(conn_it == m_connCache.end())
+            return ConnectionPtr(); // not found
+        
+        ConnectionPtr pconn = *conn_it;
+#if !defined(HIVE_DISABLE_SSL)
+        if (secure)
+        {
+            if (boost::dynamic_pointer_cast<Connection::Secure>(pconn))
+            {
+                m_connCache.erase(conn_it);
+                pconn->cancel(); // stop monitor
+                return pconn;
+            }
+        }
+        else
+#endif // HIVE_DISABLE_SSL
+        {
+            if (boost::dynamic_pointer_cast<Connection::Simple>(pconn))
+            {
+                m_connCache.erase(conn_it);
+                pconn->cancel(); // stop monitor
+                return pconn;
+            }
+        }
+    }
 
     /// @brief Start asynchronous connect operation.
     /**
@@ -2390,56 +2420,55 @@ private:
     {
         HIVELOG_TRACE_BLOCK(m_log, "asyncConnect(task)");
         bool cached = true;
-
+        
+        ConnList::iterator conn_it = findCachedConnection(epi->endpoint());
         String const& proto = task->request->getUrl().getProtocol();
-        if (boost::iequals(proto, "https") || boost::iequals(proto, "wss")) // secure connection?
+        const bool isConnectionSequre = boost::iequals(proto, "https") || boost::iequals(proto, "wss");
+        if(conn_it == m_connCache.end())
         {
-#if !defined(HIVE_DISABLE_SSL)
-            if (!(task->m_connection = findCachedConnection(epi->endpoint(), true)))
+            if (isConnectionSequre) // secure connection?
             {
+#if !defined(HIVE_DISABLE_SSL)
                 m_context.set_options(boost::asio::ssl::context::default_workarounds);
                 Connection::Secure::SharedPtr conn = Connection::Secure::create(m_ios, m_context);
+
+                //boost::asio::socket_base::keep_alive option(true);
+                //conn->getStream().lowest_layer().set_option(option);
+
                 conn->getStream().set_verify_mode(boost::asio::ssl::verify_none); // TODO: boost::asio::ssl::verify_peer
                 conn->getStream().set_verify_callback(
                     boost::bind(&Client::onVerify,
-                        shared_from_this(), _1, _2));
+                    shared_from_this(), _1, _2));
                 task->m_connection = conn;
-                cached = false;
-            }
+                HIVELOG_DEBUG(m_log, "Task{" << task.get()
+                    << "} start async Connection{"
+                    << task->m_connection.get() << "}");
+
+                task->m_connection->async_connect(epi,
+                    boost::bind(&Client::onConnected, shared_from_this(),
+                    task, boost::asio::placeholders::error));
 #else
-            HIVELOG_WARN(m_log, "Task{" << task.get()
-                << "} SSL connections not supported");
-            done(task, boost::asio::error::operation_not_supported);
-            return;
+                HIVELOG_WARN(m_log, "Task{" << task.get()
+                    << "} SSL connections not supported");
+                done(task, boost::asio::error::operation_not_supported);
+                return;
 #endif // HIVE_DISABLE_SSL
-        }
-        else
-        {
-            if (!(task->m_connection = findCachedConnection(epi->endpoint(), false)))
+            }
+            else
             {
                 task->m_connection = Connection::Simple::create(m_ios);
                 cached = false;
             }
         }
-
-        if (cached)
+        else
         {
+            task->m_connection = takeConnectionFromCache(conn_it, isConnectionSequre);
             HIVELOG_DEBUG(m_log, "Task{" << task.get()
                 << "} got Connection{" << task->m_connection.get()
                 << "} from cache!");
 
             m_ios.post(boost::bind(&Client::onHandshaked, shared_from_this(),
-                task, boost::system::error_code()));
-        }
-        else
-        {
-            HIVELOG_DEBUG(m_log, "Task{" << task.get()
-                << "} start async Connection{"
-                << task->m_connection.get() << "}");
-
-            task->m_connection->async_connect(epi,
-                boost::bind(&Client::onConnected, shared_from_this(),
-                    task, boost::asio::placeholders::error));
+                task, boost::system::error_code()));       
         }
     }
 
