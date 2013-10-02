@@ -11,7 +11,9 @@ Some implementation parts is based on urdl library by Christopher M. Kohlhoff.
 
 #include "defs.hpp"
 #include "misc.hpp"
-#include "log.hpp"
+//#include "log.hpp"
+#include "log4cplus/logger.h"
+#include "log4cplus/loggingmacros.h"
 
 #if !defined(HIVE_PCH)
 #   include <boost/enable_shared_from_this.hpp>
@@ -1841,17 +1843,18 @@ protected:
     /// @brief The main constructor.
     /**
     @param[in] ios The IO service.
+    @param[in] logger The instance of log4cplus logger.
     @param[in] name The client name.
     */
-    explicit Client(IOService &ios, String const& name)
+    explicit Client(IOService &ios, const log4cplus::Logger& logger, String const& name)
         : m_ios(ios)
-        , m_log("/hive/http/client/" + name)
+        , m_log(logger)
         , m_nameCache(10*60000) // 10 minutes
 #if !defined(HIVE_DISABLE_SSL)
         , m_context(boost::asio::ssl::context::sslv23)
 #endif // HIVE_DISABLE_SSL
     {
-        HIVELOG_TRACE_STR(m_log, "created");
+        LOG4CPLUS_TRACE(m_log, "created");
     }
 
 public:
@@ -1861,7 +1864,7 @@ public:
     {
         // TODO: close all keep-alive monitors!
         assert(m_taskList.empty() && "not all tasks are finished");
-        HIVELOG_TRACE_STR(m_log, "deleted");
+        LOG4CPLUS_TRACE(m_log, "deleted");
     }
 
 public:
@@ -1873,12 +1876,13 @@ public:
     /// @brief The main factory method.
     /**
     @param[in] ios The IO service.
+    @param[in] logger The instance of log4cplus logger.
     @param[in] name The optional client name.
     @return The new client instance.
     */
-    static SharedPtr create(IOService &ios, String const& name = String())
+    static SharedPtr create(IOService &ios, const log4cplus::Logger& logger, String const& name = String())
     {
-        return SharedPtr(new Client(ios, name));
+        return SharedPtr(new Client(ios, logger, name));
     }
 
 public:
@@ -1961,12 +1965,12 @@ public:
         */
         void cancel()
         {
-            HIVELOG_INFO(m_log, "Task {" << this << "} cancelled");
+            LOG4CPLUS_TRACE(m_log, "Task{" << this << "} cancelled");
             m_cancelled = true;
             m_resolver.cancel();
             if (m_connection)
             {
-                HIVELOG_INFO(m_log, "Closing Connection {" << m_connection.get() << "} while cancelling Task {" << this << "}");
+                LOG4CPLUS_INFO(m_log, "Closing Connection{" << m_connection.get() << "} while cancelling Task{" << this << "}");
                 m_connection->close();
             }
         }
@@ -1992,7 +1996,7 @@ public:
         bool m_cancelled; ///< @brief The "cancelled" flag.
         size_t m_rx_len; ///< @brief The expected content-length.
 
-        hive::log::Logger m_log; ///< @brief The HTTP logger.
+        log4cplus::Logger m_log; ///< @brief The HTTP logger.
 
     private:
 
@@ -2014,7 +2018,7 @@ public:
         @param[in] ios The IO service.
         @param[in] req The request.
         */
-        Task(IOService &ios, RequestPtr req ,hive::log::Logger& logger)
+        Task(IOService &ios, RequestPtr req, log4cplus::Logger& logger)
             : request(req)
             , m_timer_started(false)
             , m_timer(ios)
@@ -2039,7 +2043,7 @@ public:
     */
     TaskPtr send(Request::SharedPtr request, size_t timeout_ms)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "send()");
+        LOG4CPLUS_TRACE(m_log, "send()");
         assert(request && "no request");
 
         // create new task for the request
@@ -2049,19 +2053,19 @@ public:
         {
             if (ErrorCode err = asyncStartTimeout(task, timeout_ms))
             {
-                HIVELOG_ERROR(m_log, "cannot start deadline timer: ["
+                LOG4CPLUS_ERROR(m_log, "cannot start deadline timer: ["
                     << err << "] " << err.message());
                 return TaskPtr(); // no task started
             }
 
-            HIVELOG_INFO(m_log, "Task{" << task.get() << "} sending "
+            LOG4CPLUS_TRACE(m_log, "Task{" << task.get() << "} sending "
                 << request->getMethod() << " request to <"
                 << request->getUrl().toStr() << "> with "
                 << timeout_ms << " ms timeout:\n" << *request);
         }
         else
         {
-            HIVELOG_INFO(m_log, "Task{" << task.get() << "} sending "
+            LOG4CPLUS_TRACE(m_log, "Task{" << task.get() << "} sending "
                 << request->getMethod() << " request to <"
                 << request->getUrl().toStr()
                 << "> without timeout:\n" << *request);
@@ -2079,7 +2083,7 @@ public:
     */
     void cancelAll()
     {
-        HIVELOG_TRACE_BLOCK(m_log, "cancelAll()");
+        LOG4CPLUS_TRACE(m_log, "cancelAll()");
         TaskList::iterator i = m_taskList.begin();
         TaskList::iterator e = m_taskList.end();
         for (; i != e; ++i)
@@ -2096,7 +2100,7 @@ public:
     */
     void clearKeepAliveConnections()
     {
-        HIVELOG_TRACE_BLOCK(m_log, "clearKeepAliveConnections()");
+        LOG4CPLUS_TRACE(m_log, "clearKeepAliveConnections()");
         ConnList::iterator i = m_connCache.begin();
         ConnList::iterator e = m_connCache.end();
         for (; i != e; ++i)
@@ -2118,7 +2122,7 @@ private:
     */
     void finish(TaskPtr task)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "finish(task)");
+        LOG4CPLUS_TRACE(m_log, "finish(task)");
 
         Connection::StreamBuf &sbuf = task->m_connection->getBuffer();
         Connection::StreamBuf::const_buffers_type data = sbuf.data();
@@ -2138,7 +2142,7 @@ private:
             sbuf.consume(sbuf.size());
         }
 
-        HIVELOG_INFO(m_log, "Task{" << task.get()
+        LOG4CPLUS_TRACE(m_log, "Task{" << task.get()
             << "} got response:\n"
             << *task->response);
     }
@@ -2154,7 +2158,7 @@ private:
     */
     void done(TaskPtr task, ErrorCode err)
     {
-        HIVELOG_TRACE(m_log, "done(task) Task {" << task.get() << "}");
+        LOG4CPLUS_TRACE(m_log, "done(task) for Task{" << task.get() << "}");
 
         task->errorCode = err;
         if (task->m_timer_started)
@@ -2181,7 +2185,7 @@ private:
             if (!boost::iequals(hconn, "close")) // TODO: or boost::iequals(hconn, "keep-alive")
             {
                 m_connCache.push_back(pconn);
-                HIVELOG_DEBUG(m_log, "Task{" << task.get()
+                LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
                     << "} - keep-alive Connection{"
                     << pconn.get() << "} is cached. Cache size is " << m_connCache.size());
                 asyncStartKeepAliveMonitor(pconn);
@@ -2201,7 +2205,7 @@ private:
     */
     ErrorCode asyncStartTimeout(TaskPtr task, size_t timeout_ms)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "asyncStartTimeout(task)");
+        LOG4CPLUS_TRACE(m_log, "asyncStartTimeout(task)");
         ErrorCode err;
 
         // initialize timer
@@ -2226,23 +2230,23 @@ private:
     */
     void onTimedOut(TaskPtr task, ErrorCode err)
     {
-        HIVELOG_TRACE(m_log, "onTimedOut(Task {" << task.get() << "})");
+        LOG4CPLUS_TRACE(m_log, "onTimedOut(task) for Task{" << task.get() << "}");
 
         if (!err) // timeout expired
         {
-            HIVELOG_INFO(m_log, "Task{" << task.get() << "} timed out");
+            LOG4CPLUS_INFO(m_log, "Task{" << task.get() << "} timed out");
             done(task, boost::asio::error::timed_out);
             task->cancel();
         }
         else if (boost::asio::error::operation_aborted == err)
         {
-            HIVELOG_DEBUG(m_log, "Task{" << task.get()
+            LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
                 << "} timeout cancelled");
             // do nothing
         }
         else
         {
-            HIVELOG_ERROR(m_log, "Task{" << task.get()
+            LOG4CPLUS_ERROR(m_log, "Task{" << task.get()
                 << "} timeout error: [" << err
                 << "] " << err.message());
             done(task, err);
@@ -2264,7 +2268,7 @@ private:
     */
     void asyncResolve(TaskPtr task, bool firstAttempt)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "asyncResolve(task)");
+        LOG4CPLUS_TRACE(m_log, "asyncResolve(task)");
 
         Url const& url = task->request->getUrl();
         String service;
@@ -2289,12 +2293,12 @@ private:
         {
             Resolver::iterator epi = Resolver::iterator::create(cachedEndpoint, url.getHost(), service);
             m_ios.post(boost::bind(&Client::onResolved, shared_from_this(), task, ErrorCode(), epi, firstAttempt));
-            HIVELOG_DEBUG(m_log, "Task{" << task.get() << "} resolved from name cache!");
+            LOG4CPLUS_DEBUG(m_log, "Task{" << task.get() << "} resolved from name cache!");
         }
         else
         {
             // start async resolve operation
-            HIVELOG_DEBUG(m_log, "Task{" << task.get() << "} start async resolve <"
+            LOG4CPLUS_DEBUG(m_log, "Task{" << task.get() << "} start async resolve <"
                 << url.getHost() << ">, \"" << service << "\" service");
             task->m_resolver.async_resolve(Resolver::query(url.getHost(), service),
                 boost::bind(&Client::onResolved, shared_from_this(),
@@ -2314,11 +2318,11 @@ private:
     */
     void onResolved(TaskPtr task, ErrorCode err, Resolver::iterator epi, bool firstAttempt)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "onResolved(task)");
+        LOG4CPLUS_TRACE(m_log, "onResolved(task)");
 
         if (!err && !task->m_cancelled)
         {
-            HIVELOG_DEBUG(m_log, "Task{" << task.get() << "} <"
+            LOG4CPLUS_DEBUG(m_log, "Task{" << task.get() << "} <"
                 << task->request->getUrl().getHost()
                 << "> resolved as: " << dump(epi));
 
@@ -2326,17 +2330,17 @@ private:
         }
         else if (task->m_cancelled)
         {
-            HIVELOG_DEBUG(m_log, "Task{" << task.get()
+            LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
                 << "} async resolve cancelled");
             done(task, boost::asio::error::operation_aborted);
         }
         else if (firstAttempt)
         {
-            HIVELOG_WARN(m_log, "Task{" << task.get() << "} <"
+            LOG4CPLUS_WARN(m_log, "Task{" << task.get() << "} <"
                 << task->request->getUrl().getHost()
                 << "> async resolve error: ["
                 << err << "] " << err.message());
-            HIVELOG_DEBUG(m_log, "Task{" << task.get()
+            LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
                 << "} resolve with port number "
                    "instead of protocol name");
 
@@ -2346,7 +2350,7 @@ private:
         }
         else
         {
-            HIVELOG_ERROR(m_log, "Task{" << task.get() << "} <"
+            LOG4CPLUS_ERROR(m_log, "Task{" << task.get() << "} <"
                 << task->request->getUrl().getHost()
                 << "> async resolve error: ["
                 << err << "] " << err.message());
@@ -2408,7 +2412,7 @@ private:
     */
     void asyncConnect(TaskPtr task, Resolver::iterator epi)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "asyncConnect(task)");
+        LOG4CPLUS_TRACE(m_log, "asyncConnect(task)");
         bool cached = true;
 
         String const& proto = task->request->getUrl().getProtocol();
@@ -2427,7 +2431,7 @@ private:
                 cached = false;
             }
 #else
-            HIVELOG_WARN(m_log, "Task{" << task.get()
+            LOG4CPLUS_WARN(m_log, "Task{" << task.get()
                 << "} SSL connections not supported");
             done(task, boost::asio::error::operation_not_supported);
             return;
@@ -2444,7 +2448,7 @@ private:
 
         if (cached)
         {
-            HIVELOG_DEBUG(m_log, "Task{" << task.get()
+            LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
                 << "} got Connection{" << task->m_connection.get()
                 << "} from cache!");
 
@@ -2453,7 +2457,7 @@ private:
         }
         else
         {
-            HIVELOG_DEBUG(m_log, "Task{" << task.get()
+            LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
                 << "} start async Connection{"
                 << task->m_connection.get() << "}");
 
@@ -2471,7 +2475,7 @@ private:
     */
     void onConnected(TaskPtr task, ErrorCode err)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "onConnected(task)");
+        LOG4CPLUS_TRACE(m_log, "onConnected(task)");
 
         if (!err && !task->m_cancelled)
         {
@@ -2488,13 +2492,13 @@ private:
         }
         else if (task->m_cancelled)
         {
-            HIVELOG_DEBUG(m_log, "Task{" << task.get()
+            LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
                 << "} async connection cancelled");
             done(task, boost::asio::error::operation_aborted);
         }
         else
         {
-            HIVELOG_ERROR(m_log, "Task{" << task.get()
+            LOG4CPLUS_ERROR(m_log, "Task{" << task.get()
                 << "} async connection error: ["
                 << err << "] " << err.message());
             done(task, err);
@@ -2512,10 +2516,10 @@ private:
     */
     void asyncHandshake(TaskPtr task)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "asyncHandshake(task)");
+        LOG4CPLUS_TRACE(m_log, "asyncHandshake(task)");
 
         // send whole request
-        HIVELOG_DEBUG(m_log, "Task{" << task.get()
+        LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
             << "} start async handshake");
         task->m_connection->async_handshake(
 #if !defined(HIVE_DISABLE_SSL)
@@ -2535,7 +2539,7 @@ private:
     */
     void onHandshaked(TaskPtr task, ErrorCode err)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "onHandshaked(task)");
+        LOG4CPLUS_TRACE(m_log, "onHandshaked(task)");
 
         if (!err && !task->m_cancelled)
         {
@@ -2543,13 +2547,13 @@ private:
         }
         else if (task->m_cancelled)
         {
-            HIVELOG_DEBUG(m_log, "Task{" << task.get()
+            LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
                 << "} async handshake cancelled");
             done(task, boost::asio::error::operation_aborted);
         }
         else
         {
-            HIVELOG_ERROR(m_log, "Task{" << task.get()
+            LOG4CPLUS_ERROR(m_log, "Task{" << task.get()
                 << "} async handshake error: ["
                 << err << "] " << err.message());
             done(task, err);
@@ -2566,9 +2570,9 @@ private:
     */
     bool onVerify(bool preverified, boost::asio::ssl::verify_context& context)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "onVerify()");
+        LOG4CPLUS_TRACE(m_log, "onVerify()");
 
-        HIVELOG_DEBUG(m_log, "verify certificate: " << preverified);
+        LOG4CPLUS_DEBUG(m_log, "verify certificate: " << preverified);
 
         // TODO: check certificate, use ssl::rfc2818_verification class
         return preverified;
@@ -2587,7 +2591,7 @@ private:
     */
     void asyncWriteRequest(TaskPtr task)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "asyncWriteRequest(task)");
+        LOG4CPLUS_TRACE(m_log, "asyncWriteRequest(task)");
 
         // prepare output buffer
         Connection::StreamBuf &sbuf = task->m_connection->getBuffer();
@@ -2595,7 +2599,7 @@ private:
         task->request->write(os);
 
         // send whole request
-        HIVELOG_DEBUG(m_log, "Task{" << task.get()
+        LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
             << "} start async request sending");
         boost::asio::async_write(*task->m_connection, sbuf,
             boost::bind(&Client::onRequestWritten,
@@ -2612,7 +2616,7 @@ private:
     */
     void onRequestWritten(TaskPtr task, ErrorCode err, size_t len)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "onRequestWritten(task)");
+        LOG4CPLUS_TRACE(m_log, "onRequestWritten(task)");
 
         if (!err && !task->m_cancelled)
         {
@@ -2620,13 +2624,13 @@ private:
         }
         else if (task->m_cancelled)
         {
-            HIVELOG_DEBUG(m_log, "Task{" << task.get()
+            LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
                 << "} async request sending cancelled");
             done(task, boost::asio::error::operation_aborted);
         }
         else
         {
-            HIVELOG_ERROR(m_log, "Task{" << task.get()
+            LOG4CPLUS_ERROR(m_log, "Task{" << task.get()
                 << "} async request sending error: ["
                 << err << "] " << err.message());
             done(task, err);
@@ -2644,9 +2648,9 @@ private:
     */
     void asyncReadStatus(TaskPtr task)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "asyncReadStatus(task)");
+        LOG4CPLUS_TRACE(m_log, "asyncReadStatus(task)");
 
-        HIVELOG_DEBUG(m_log, "Task{" << task.get()
+        LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
             << "} start async status line receiving");
         boost::asio::async_read_until(*task->m_connection,
             task->m_connection->getBuffer(), impl::CRLF,
@@ -2664,7 +2668,7 @@ private:
     */
     void onStatusRead(TaskPtr task, ErrorCode err, size_t len)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "onStatusRead(task)");
+        LOG4CPLUS_TRACE(m_log, "onStatusRead(task)");
 
         if (!err && !task->m_cancelled)
         {
@@ -2681,7 +2685,7 @@ private:
                 task->response = Response::create(status, reason);
                 task->response->setVersion(vmajor, vminor);
 
-                HIVELOG_DEBUG(m_log, "Task{" << task.get() << "} got status line: "
+                LOG4CPLUS_DEBUG(m_log, "Task{" << task.get() << "} got status line: "
                     << dumpStatusLine(task->response));
 
                 // TODO: handle 100-Continue response
@@ -2690,20 +2694,20 @@ private:
             }
             else
             {
-                HIVELOG_ERROR(m_log, "Task{" << task.get()
+                LOG4CPLUS_ERROR(m_log, "Task{" << task.get()
                     << "} no data for status line");
                 done(task, boost::asio::error::no_data); // boost::asio::error::failure
             }
         }
         else if (task->m_cancelled)
         {
-            HIVELOG_DEBUG(m_log, "Task{" << task.get()
+            LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
                 << "} async status line receiving cancelled");
             done(task, boost::asio::error::operation_aborted);
         }
         else
         {
-            HIVELOG_ERROR(m_log, "Task{" << task.get()
+            LOG4CPLUS_ERROR(m_log, "Task{" << task.get()
                 << "} async status line receiving error: ["
                 << err << "] " << err.message());
             done(task, err);
@@ -2721,10 +2725,10 @@ private:
     */
     void asyncReadHeaders(TaskPtr task)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "asyncReadHeaders(task)");
+        LOG4CPLUS_TRACE(m_log, "asyncReadHeaders(task)");
 
         // start "header" reading
-        HIVELOG_DEBUG(m_log, "Task{" << task.get()
+        LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
             << "} start async headers receiving");
         boost::asio::async_read_until(*task->m_connection,
             task->m_connection->getBuffer(), impl::CRLFx2,
@@ -2741,7 +2745,7 @@ private:
     */
     void onHeadersRead(TaskPtr task, ErrorCode err, size_t)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "onHeadersRead(task)");
+        LOG4CPLUS_TRACE(m_log, "onHeadersRead(task)");
 
         if (!err && !task->m_cancelled)
         {
@@ -2766,20 +2770,20 @@ private:
             }
             else
             {
-                HIVELOG_ERROR(m_log, "Task{" << task.get()
+                LOG4CPLUS_ERROR(m_log, "Task{" << task.get()
                     << "} no data for headers");
                 done(task, boost::asio::error::no_data); // boost::asio::error::failure
             }
         }
         else if (task->m_cancelled)
         {
-            HIVELOG_DEBUG(m_log, "Task{" << task.get()
+            LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
                 << "} async headers receiving cancelled");
             done(task, boost::asio::error::operation_aborted);
         }
         else
         {
-            HIVELOG_ERROR(m_log, "Task{" << task.get()
+            LOG4CPLUS_ERROR(m_log, "Task{" << task.get()
                 << "} async headers receiving error: ["
                 << err << "] " << err.message());
             done(task, err);
@@ -2797,10 +2801,10 @@ private:
     */
     void asyncReadContent(TaskPtr task)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "asyncReadContent(task)");
+        LOG4CPLUS_TRACE(m_log, "asyncReadContent(task)");
 
         // start "content" reading
-        HIVELOG_DEBUG(m_log, "Task{" << task.get()
+        LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
             << "} start async content receiving");
         boost::asio::async_read(*task->m_connection,
             task->m_connection->getBuffer(),
@@ -2818,7 +2822,7 @@ private:
     */
     void onContentRead(TaskPtr task, ErrorCode err, size_t)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "onContentRead(task)");
+        LOG4CPLUS_TRACE(m_log, "onContentRead(task)");
 
         Connection::StreamBuf &sbuf = task->m_connection->getBuffer();
         if (!err && !task->m_cancelled)
@@ -2834,7 +2838,7 @@ private:
         }
         else if (task->m_cancelled)
         {
-            HIVELOG_DEBUG(m_log, "Task{" << task.get()
+            LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
                 << "} async content receiving cancelled");
             done(task, boost::asio::error::operation_aborted);
         }
@@ -2850,7 +2854,7 @@ private:
         }
         else
         {
-            HIVELOG_ERROR(m_log, "Task{" << task.get()
+            LOG4CPLUS_ERROR(m_log, "Task{" << task.get()
                 << "} async content receiving error: ["
                 << err << "] " << err.message());
             done(task, err);
@@ -2868,9 +2872,9 @@ private:
     */
     void asyncStartKeepAliveMonitor(ConnectionPtr pconn)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "asyncStartKeepAliveMonitor(pconn)");
+        LOG4CPLUS_TRACE(m_log, "asyncStartKeepAliveMonitor(pconn)");
 
-        HIVELOG_DEBUG(m_log, "Connection{" << pconn.get()
+        LOG4CPLUS_DEBUG(m_log, "Connection{" << pconn.get()
             << "} start async receiving (keep-alive monitor)");
         static char dummy = 0;
         boost::asio::async_read(*pconn, boost::asio::buffer(&dummy, 1),
@@ -2888,25 +2892,25 @@ private:
     */
     void onKeepAliveMonitorRead(ConnectionPtr pconn, ErrorCode err, size_t len)
     {
-        HIVELOG_TRACE_BLOCK(m_log, "onKeepAliveMonitorRead(task)");
+        LOG4CPLUS_TRACE(m_log, "onKeepAliveMonitorRead(task)");
 
         if (!err)
         {
-            HIVELOG_WARN(m_log, "Connection{" << pconn.get()
+            LOG4CPLUS_WARN(m_log, "Connection{" << pconn.get()
                 << "} got unexpected data, ignored");
             asyncStartKeepAliveMonitor(pconn);
         }
         else if (err == boost::asio::error::operation_aborted)
         {
-            HIVELOG_DEBUG(m_log, "Connection{" << pconn.get()
+            LOG4CPLUS_DEBUG(m_log, "Connection{" << pconn.get()
                 << "} async keep-alive monitor cancelled");
         }
         else
         {
-            HIVELOG_ERROR(m_log, "Connection{" << pconn.get()
+            LOG4CPLUS_ERROR(m_log, "Connection{" << pconn.get()
                 << "} async keep-alive monitor receiving error: ["
                 << err << "] " << err.message());
-            HIVELOG_DEBUG(m_log, "Connection{" << pconn.get()
+            LOG4CPLUS_DEBUG(m_log, "Connection{" << pconn.get()
                 << "} is dead, will be removed");
             m_connCache.remove(pconn);
         }
@@ -3285,7 +3289,7 @@ private:
 
 private:
     IOService &m_ios; ///< @brief The IO service.
-    hive::log::Logger m_log; ///< @brief The HTTP logger.
+    log4cplus::Logger m_log; ///< @brief The HTTP logger.
     NameCache m_nameCache; ///< @brief The local DNS name cache.
 
 #if !defined(HIVE_DISABLE_SSL)
