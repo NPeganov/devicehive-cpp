@@ -60,6 +60,9 @@ class Url
 public:
     class Builder; // will be defined later
 
+    /// @brief The shared pointer type.
+    typedef boost::shared_ptr<Url> SharedPtr;
+
 public:
 
     /// @brief The default constructor.
@@ -408,6 +411,8 @@ private:
     String m_fragment; ///< @brief The fragment.
 };
 
+/// @brief The URL shared pointer type.
+typedef Url::SharedPtr UrlPtr;
 
 /// @brief Are two URLs equal?
 /**
@@ -1426,7 +1431,9 @@ public:
 protected:
 
     /// @brief The default constructor.
-    Connection()
+    Connection(IOService & ios)
+        : m_idle_lifetimer(ios)
+        , m_timer_started(false)
     {}
 
 public:
@@ -1540,6 +1547,11 @@ private:
     This buffer may be used for read/write operations.
     */
     StreamBuf m_buffer;
+
+public:
+    typedef boost::asio::deadline_timer Timer;       ///< @brief The timer type.
+    bool m_timer_started; ///< @brief The timer "started" flag.
+    Timer m_idle_lifetimer;    ///< @brief The deadline timer.
 };
 
 /// @brief The HTTP connection shared pointer type.
@@ -1564,7 +1576,8 @@ protected:
     @param[in] ios The IO service.
     */
     explicit Simple(IOService & ios)
-        : m_socket(ios)
+        : Base(ios)
+        , m_socket(ios)
     {}
 
 public:
@@ -1699,7 +1712,8 @@ protected:
     @param[in] context The SSL context.
     */
     Secure(IOService & ios, SslContext & context)
-        : m_stream(ios, context)
+        : Base(ios)
+        , m_stream(ios, context)
     {}
 
 public:
@@ -2877,6 +2891,12 @@ private:
         LOG4CPLUS_DEBUG(m_log, "Connection{" << pconn.get()
             << "} start async receiving (keep-alive monitor)");
         static char dummy = 0;
+
+        pconn->m_idle_lifetimer.expires_from_now(boost::posix_time::milliseconds(30000));
+        pconn->m_idle_lifetimer.async_wait(
+            boost::bind(&Connection::cancel, pconn));
+        pconn->m_timer_started = true;
+
         boost::asio::async_read(*pconn, boost::asio::buffer(&dummy, 1),
             boost::bind(&Client::onKeepAliveMonitorRead, shared_from_this(),
                 pconn, boost::asio::placeholders::error,
