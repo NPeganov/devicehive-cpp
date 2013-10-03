@@ -1860,10 +1860,11 @@ protected:
     @param[in] logger The instance of log4cplus logger.
     @param[in] name The client name.
     */
-    explicit Client(IOService &ios, const log4cplus::Logger& logger, String const& name)
+    explicit Client(IOService &ios, const log4cplus::Logger& logger, String const& name, size_t conn_lifetime = 3/*0*/)
         : m_ios(ios)
         , m_log(logger)
         , m_nameCache(10*60000) // 10 minutes
+        , m_conn_lifetime(conn_lifetime)
 #if !defined(HIVE_DISABLE_SSL)
         , m_context(boost::asio::ssl::context::sslv23)
 #endif // HIVE_DISABLE_SSL
@@ -2399,6 +2400,11 @@ private:
                     {
                         m_connCache.erase(i);
                         pconn->cancel(); // stop monitor
+                        if(pconn->m_timer_started)
+                        {
+                            pconn->m_idle_lifetimer.cancel();
+                            pconn->m_timer_started = false;
+                        }
                         return pconn;
                     }
                 }
@@ -2409,6 +2415,11 @@ private:
                     {
                         m_connCache.erase(i);
                         pconn->cancel(); // stop monitor
+                        if(pconn->m_timer_started)
+                        {
+                            pconn->m_idle_lifetimer.cancel();
+                            pconn->m_timer_started = false;
+                        }
                         return pconn;
                     }
                 }
@@ -2892,9 +2903,9 @@ private:
             << "} start async receiving (keep-alive monitor)");
         static char dummy = 0;
 
-        pconn->m_idle_lifetimer.expires_from_now(boost::posix_time::milliseconds(30000));
+        pconn->m_idle_lifetimer.expires_from_now(boost::posix_time::milliseconds(1000 * 60 * m_conn_lifetime));
         pconn->m_idle_lifetimer.async_wait(
-            boost::bind(&Connection::cancel, pconn));
+            boost::bind(&Client::onKeepAliveConnectionTimedOut, shared_from_this(), pconn, boost::asio::placeholders::error));
         pconn->m_timer_started = true;
 
         boost::asio::async_read(*pconn, boost::asio::buffer(&dummy, 1),
@@ -2934,6 +2945,40 @@ private:
                 << "} is dead, will be removed");
             m_connCache.remove(pconn);
         }
+    }
+/// @}
+
+
+    /// @brief Timeout for cached connection in idle state.
+    /**
+    @param[in] pconn The keep-alive connection.
+    */
+    void onKeepAliveConnectionTimedOut(ConnectionPtr pconn, ErrorCode err)
+    {
+        LOG4CPLUS_TRACE(m_log, "onKeepAliveConnectionTimedOut(pconn) for Connection{" << pconn.get() << "}");
+        if (!err)
+        {
+            if(pconn)
+            {
+                LOG4CPLUS_TRACE(m_log, "KeepAliveConnection{" << pconn.get() << "} will be cancelled by timeout");
+                if(pconn->m_timer_started)
+                {
+                    pconn->m_idle_lifetimer.cancel();
+                    pconn->m_timer_started = false;
+                }
+
+                pconn->cancel();
+                pconn->close();
+                m_connCache.remove(pconn);
+            }
+
+        }
+        else if (boost::asio::error::operation_aborted == err)
+        {
+            LOG4CPLUS_TRACE(m_log, "KeepAliveConnection{" << pconn.get() << "} got some new job");
+            // do nothing
+        }
+
     }
 /// @}
 
@@ -3311,6 +3356,7 @@ private:
     IOService &m_ios; ///< @brief The IO service.
     log4cplus::Logger m_log; ///< @brief The HTTP logger.
     NameCache m_nameCache; ///< @brief The local DNS name cache.
+    size_t m_conn_lifetime; ///< @brief The life time for cached connection in idle state in minutes.
 
 #if !defined(HIVE_DISABLE_SSL)
     /// @brief The SSL context.
