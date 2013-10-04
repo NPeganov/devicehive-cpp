@@ -1626,6 +1626,12 @@ public: // Connection
     /// @copydoc Connection::cancel()
     virtual void cancel()
     {
+        if(m_timer_started)
+        {
+            m_idle_lifetimer.cancel();
+            m_timer_started = false;
+        }
+
         ErrorCode terr;
 
         m_socket.cancel(terr);
@@ -1763,6 +1769,12 @@ public: // Connection
     /// @copydoc Connection::cancel()
     virtual void cancel()
     {
+        if(m_timer_started)
+        {
+            m_idle_lifetimer.cancel();
+            m_timer_started = false;
+        }
+
         ErrorCode terr;
 
         m_stream.lowest_layer().cancel(terr);
@@ -1860,7 +1872,7 @@ protected:
     @param[in] logger The instance of log4cplus logger.
     @param[in] name The client name.
     */
-    explicit Client(IOService &ios, const log4cplus::Logger& logger, String const& name, size_t conn_lifetime = 3/*0*/)
+    explicit Client(IOService &ios, const log4cplus::Logger& logger, String const& name, size_t conn_lifetime = 30)
         : m_ios(ios)
         , m_log(logger)
         , m_nameCache(10*60000) // 10 minutes
@@ -2400,11 +2412,6 @@ private:
                     {
                         m_connCache.erase(i);
                         pconn->cancel(); // stop monitor
-                        if(pconn->m_timer_started)
-                        {
-                            pconn->m_idle_lifetimer.cancel();
-                            pconn->m_timer_started = false;
-                        }
                         return pconn;
                     }
                 }
@@ -2415,11 +2422,6 @@ private:
                     {
                         m_connCache.erase(i);
                         pconn->cancel(); // stop monitor
-                        if(pconn->m_timer_started)
-                        {
-                            pconn->m_idle_lifetimer.cancel();
-                            pconn->m_timer_started = false;
-                        }
                         return pconn;
                     }
                 }
@@ -2904,8 +2906,8 @@ private:
         static char dummy = 0;
 
         pconn->m_idle_lifetimer.expires_from_now(boost::posix_time::milliseconds(1000 * 60 * m_conn_lifetime));
-        pconn->m_idle_lifetimer.async_wait(
-            boost::bind(&Client::onKeepAliveConnectionTimedOut, shared_from_this(), pconn, boost::asio::placeholders::error));
+        pconn->m_idle_lifetimer.async_wait(boost::bind(&Client::onKeepAliveConnectionTimedOut, 
+            shared_from_this(), pconn, boost::asio::placeholders::error));
         pconn->m_timer_started = true;
 
         boost::asio::async_read(*pconn, boost::asio::buffer(&dummy, 1),
@@ -2975,7 +2977,7 @@ private:
         }
         else if (boost::asio::error::operation_aborted == err)
         {
-            LOG4CPLUS_TRACE(m_log, "KeepAliveConnection{" << pconn.get() << "} got some new job");
+            LOG4CPLUS_TRACE(m_log, "Idle lifetimer for Connection{" << pconn.get() << "} has been cancelled.");
             // do nothing
         }
 
