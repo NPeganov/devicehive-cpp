@@ -718,6 +718,7 @@ const char Authorization[]      = "Authorization";      ///< @hideinitializer @b
 const char SetCookie[]          = "Set-Cookie";         ///< @hideinitializer @brief The "Set-Cookie" header name.
 const char Cookie[]             = "Cookie";             ///< @hideinitializer @brief The "Cookie" header name.
 const char Proxy_Connection[]   = "Proxy-Connection";   ///< @hideinitializer @brief The "Proxy-Connection" header name.
+const char Pragma[]             = "Pragma";             ///< @hideinitializer @brief The "Pragma" header name.
 
         // TODO: add more headers here
 
@@ -1101,6 +1102,33 @@ public:
         return req;
     }
 
+
+    /// @brief Create CONNECT request.
+    /**
+    @param[in] url The URL.
+    @return The new POST request instance.
+    */
+    static SharedPtr CONNECT(Url const& url)
+    {
+        return create("CONNECT", url);
+    }
+
+
+    /// @brief Create CONNECT request with content.
+    /**
+    @param[in] url The URL.
+    @param[in] contentType The optional content type.
+    @param[in] content The optional content.
+    @return The new CONNECT request instance.
+    */
+    static SharedPtr CONNECT(Url const& url, String const& contentType, String const& content)
+    {
+        SharedPtr req = CONNECT(url);
+        req->addHeader(header::Content_Type, contentType);
+        req->setContent(content);
+        return req;
+    }
+    
 public:
 
     /// @brief Get the HTTP method.
@@ -1872,11 +1900,13 @@ protected:
     @param[in] logger The instance of log4cplus logger.
     @param[in] name The client name.
     */
-    explicit Client(IOService &ios, const log4cplus::Logger& logger, String const& name, size_t conn_lifetime = 30)
+    explicit Client(IOService &ios, const log4cplus::Logger& logger, http::Url const& proxy = http::Url(), String const& name = String(), size_t conn_lifetime = 30)
         : m_ios(ios)
         , m_log(logger)
         , m_nameCache(10*60000) // 10 minutes
         , m_conn_lifetime(conn_lifetime)
+        , m_proxyUrl(proxy)
+        , m_maxOpenedConn(0)
 #if !defined(HIVE_DISABLE_SSL)
         , m_context(boost::asio::ssl::context::sslv23)
 #endif // HIVE_DISABLE_SSL
@@ -1907,9 +1937,9 @@ public:
     @param[in] name The optional client name.
     @return The new client instance.
     */
-    static SharedPtr create(IOService &ios, const log4cplus::Logger& logger, String const& name = String())
+    static SharedPtr create(IOService &ios, const log4cplus::Logger& logger, http::Url const& proxy = http::Url(), String const& name = String())
     {
-        return SharedPtr(new Client(ios, logger, name));
+        return SharedPtr(new Client(ios, logger, proxy, name));
     }
 
 public:
@@ -2019,6 +2049,7 @@ public:
         Timer m_timer;    ///< @brief The deadline timer.
 
         Resolver m_resolver; ///< @brief The host name resolver.
+        SharedPtr m_proxyConnectionTask;
 
         bool m_cancelled; ///< @brief The "cancelled" flag.
         size_t m_rx_len; ///< @brief The expected content-length.
@@ -2103,6 +2134,76 @@ public:
         return task;
     }
 
+
+    /// @brief Send proxy connection request asynchronously.
+    /**
+    @param[in] parentTask The parrent task, initiating connection to proxys
+    @param[in] timeout_ms The request timeout, milliseconds.
+        If it's zero, no any deadline timers will be started.
+    @return The new task instance.
+    */
+    TaskPtr proxyConnect(TaskPtr parentTask, size_t timeout_ms)
+    {
+        LOG4CPLUS_TRACE(m_log, "proxyConnect()");
+
+        // create new task for the request
+        RequestPtr request = getConnectRequest(parentTask->request->getUrl());
+        TaskPtr task(new Task(m_ios, request, m_log));
+
+        if (0 < timeout_ms)
+        {
+            if (ErrorCode err = asyncStartTimeout(task, timeout_ms))
+            {
+                LOG4CPLUS_ERROR(m_log, "cannot start deadline timer: ["
+                    << err << "] " << err.message());
+                return TaskPtr(); // no task started
+            }
+
+            LOG4CPLUS_TRACE(m_log, "Task{" << task.get() << "} sending proxy connection "
+                << request->getMethod() << " request to <"
+                << request->getUrl().toStr() << "> with "
+                << timeout_ms << " ms timeout:\n" << *request);
+        }
+        else
+        {
+            LOG4CPLUS_TRACE(m_log, "Task{" << task.get() << "} sending proxy connection "
+                << request->getMethod() << " request to <"
+                << request->getUrl().toStr()
+                << "> without timeout:\n" << *request);
+        }
+
+        task->m_connection = parentTask->takeConnection();
+        LOG4CPLUS_INFO(m_log, "Created Task{" << task.get() << "} to connect to Proxy. Will use Connection {"
+            << task->m_connection.get() << "}, taken from parent Task{" << parentTask << "}");
+        m_taskList.push_back(task);
+        m_ios.post(boost::bind(&Client::asyncWriteRequest, shared_from_this(), task));
+        return task;
+    }
+
+
+    /// @briefProxy connection request callback.
+    /**
+    @param[in] parentTask The parrent task, initiating connection to proxy
+    @param[in] connectTask The task, which has performed connection to proxy
+    */
+    void onProxyConnect(TaskPtr parentTask, TaskPtr connectTask)
+    {
+        LOG4CPLUS_TRACE(m_log, "onProxyConnect(): parentTask{" << parentTask.get() << "}, connectTask{" << connectTask.get() << "}");
+
+        parentTask->m_connection = connectTask->takeConnection();
+        if (!connectTask->errorCode)
+        {
+            LOG4CPLUS_INFO(m_log, "Successfully connected to proxy using Task{" << connectTask.get() << "}");
+            const bool handshakeForProxy = false;
+            asyncHandshake(parentTask, handshakeForProxy);
+        }
+        else
+        {
+            LOG4CPLUS_ERROR(m_log, "Failed to connect to proxy using Task{" << connectTask.get() << "}: error: " 
+                << connectTask->errorCode.value() << ", message: " << connectTask->errorCode.message());
+            done(parentTask, connectTask->errorCode);
+        }
+    }
 
     /// @brief Cancel all tasks.
     /**
@@ -2215,6 +2316,9 @@ private:
                 LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
                     << "} - keep-alive Connection{"
                     << pconn.get() << "} is cached. Cache size is " << m_connCache.size());
+
+                LoggConnEvent(pconn, Client::Stored);
+
                 asyncStartKeepAliveMonitor(pconn);
             }
         }
@@ -2262,8 +2366,9 @@ private:
         if (!err) // timeout expired
         {
             LOG4CPLUS_INFO(m_log, "Task{" << task.get() << "} timed out");
-            done(task, boost::asio::error::timed_out);
             task->cancel();
+            LoggConnEvent(task->takeConnection(), Client::Closed);
+            done(task, boost::asio::error::timed_out);
         }
         else if (boost::asio::error::operation_aborted == err)
         {
@@ -2297,7 +2402,16 @@ private:
     {
         LOG4CPLUS_TRACE(m_log, "asyncResolve(task)");
 
-        Url const& url = task->request->getUrl();
+        Url url;
+        if(m_proxyUrl.toStr().empty())
+        {
+            url = task->request->getUrl();
+        }
+        else
+        {
+            url = m_proxyUrl;
+        }
+
         String service;
         if (firstAttempt) // try the protocol name first
         {
@@ -2479,8 +2593,10 @@ private:
                 << "} got Connection{" << task->m_connection.get()
                 << "} from cache!");
 
+            LoggConnEvent(task->m_connection, Client::Loaded);
+
             m_ios.post(boost::bind(&Client::onHandshaked, shared_from_this(),
-                task, boost::system::error_code()));
+                task, boost::system::error_code(), false));
         }
         else
         {
@@ -2515,7 +2631,10 @@ private:
                 m_nameCache.update(hostName, task->m_connection->remote_endpoint());
             }
 
-            asyncHandshake(task);
+            bool handshakeForProxy = !m_proxyUrl.toStr().empty();
+            asyncHandshake(task, handshakeForProxy);
+
+            LoggConnEvent(task->m_connection, Client::Established);
         }
         else if (task->m_cancelled)
         {
@@ -2541,7 +2660,7 @@ private:
     /**
     @param[in] task The task.
     */
-    void asyncHandshake(TaskPtr task)
+    void asyncHandshake(TaskPtr task, bool forProxy = false)
     {
         LOG4CPLUS_TRACE(m_log, "asyncHandshake(task)");
 
@@ -2555,7 +2674,7 @@ private:
             0,
 #endif // HIVE_DISABLE_SSL
             boost::bind(&Client::onHandshaked, shared_from_this(),
-                task, boost::asio::placeholders::error));
+                task, boost::asio::placeholders::error, forProxy));
     }
 
 
@@ -2564,13 +2683,24 @@ private:
     @param[in] task The task.
     @param[in] err The error code.
     */
-    void onHandshaked(TaskPtr task, ErrorCode err)
+    void onHandshaked(TaskPtr task, ErrorCode err, bool forProxy = false)
     {
-        LOG4CPLUS_TRACE(m_log, "onHandshaked(task)");
+        LOG4CPLUS_TRACE(m_log, "onHandshaked(task) for Task{" << task.get() << "}, forProxy flag: " << (forProxy?"true":"false"));
 
         if (!err && !task->m_cancelled)
         {
-            asyncWriteRequest(task);
+            if (forProxy)
+            {
+                const size_t connection_timeout_ms = 120000;
+
+                if (task->m_proxyConnectionTask = proxyConnect(task, connection_timeout_ms))
+                    task->m_proxyConnectionTask->callWhenDone(boost::bind(&Client::onProxyConnect,
+                    shared_from_this(), task, task->m_proxyConnectionTask));
+            }
+            else
+            {
+                asyncWriteRequest(task);
+            }
         }
         else if (task->m_cancelled)
         {
@@ -2903,13 +3033,16 @@ private:
 
         LOG4CPLUS_DEBUG(m_log, "Connection{" << pconn.get()
             << "} start async receiving (keep-alive monitor)");
+
+        if (!pconn->m_timer_started)
+        {
+            pconn->m_idle_lifetimer.expires_from_now(boost::posix_time::milliseconds(1000 * 60 * m_conn_lifetime));
+            pconn->m_idle_lifetimer.async_wait(boost::bind(&Client::onKeepAliveConnectionTimedOut, 
+                shared_from_this(), pconn, boost::asio::placeholders::error));
+            pconn->m_timer_started = true;
+        }
+
         static char dummy = 0;
-
-        pconn->m_idle_lifetimer.expires_from_now(boost::posix_time::milliseconds(1000 * 60 * m_conn_lifetime));
-        pconn->m_idle_lifetimer.async_wait(boost::bind(&Client::onKeepAliveConnectionTimedOut, 
-            shared_from_this(), pconn, boost::asio::placeholders::error));
-        pconn->m_timer_started = true;
-
         boost::asio::async_read(*pconn, boost::asio::buffer(&dummy, 1),
             boost::bind(&Client::onKeepAliveMonitorRead, shared_from_this(),
                 pconn, boost::asio::placeholders::error,
@@ -2943,9 +3076,14 @@ private:
             LOG4CPLUS_ERROR(m_log, "Connection{" << pconn.get()
                 << "} async keep-alive monitor receiving error: ["
                 << err << "] " << err.message());
+
             LOG4CPLUS_DEBUG(m_log, "Connection{" << pconn.get()
                 << "} is dead, will be removed");
+
+            pconn->cancel();
+            pconn->close();
             m_connCache.remove(pconn);
+            LoggConnEvent(pconn, Client::Closed);
         }
     }
 /// @}
@@ -2954,6 +3092,7 @@ private:
     /// @brief Timeout for cached connection in idle state.
     /**
     @param[in] pconn The keep-alive connection.
+    @param[in] err The error code.
     */
     void onKeepAliveConnectionTimedOut(ConnectionPtr pconn, ErrorCode err)
     {
@@ -2972,16 +3111,122 @@ private:
                 pconn->cancel();
                 pconn->close();
                 m_connCache.remove(pconn);
+                LoggConnEvent(pconn, Client::Closed);
             }
-
         }
         else if (boost::asio::error::operation_aborted == err)
         {
             LOG4CPLUS_TRACE(m_log, "Idle lifetimer for Connection{" << pconn.get() << "} has been cancelled.");
             // do nothing
         }
-
     }
+
+    /// @brief Prepare proxy connection request.
+    /**
+    This HTTP request might be used for manual connection.
+
+    @param[in] url The URL to request.
+    @return The Proxy connect request.
+    */
+    static http::RequestPtr getConnectRequest(http::Url const& url)
+    {
+        http::RequestPtr req = http::Request::CONNECT(url);
+        req->setVersion(1, 1); // at least HTTP 1.1 required
+        req->addHeader(http::header::Proxy_Connection, "Keep=Alive");
+        req->addHeader(http::header::Pragma, "no-cache");
+        req->addHeader(http::header::Host, url.getHost());
+        return req;
+    }
+
+public:
+    enum ConnEvent
+    {
+        Established,
+        Stored,
+        Loaded,
+        Closed,
+    };
+
+    void LoggConnEventT(TaskPtr ptask, ConnEvent Event)    
+    {
+        if (ptask->getConnection())
+        {
+            LoggConnEvent(ptask->getConnection(), Event);        
+        }
+    }
+
+    void LoggConnEvent(ConnectionPtr pconn, ConnEvent Event)    
+    {
+    
+        String action;
+        switch (Event)
+        {
+        case Established:
+            action = "ESTABLISHED. ";
+
+            m_CurrentlyOpened.push_back(pconn);
+            m_EverOpened.push_back(pconn);
+            m_InUse.push_back(pconn);
+
+            if(m_maxOpenedConn < m_CurrentlyOpened.size())
+                m_maxOpenedConn = m_CurrentlyOpened.size();
+            break;
+
+        case Stored:
+            action = "STORED IN CACHE! ";
+            m_InUse.remove(pconn);
+            break;
+
+        case Loaded:
+            action = "GOT FROM CACHE (NEW JOB)! ";
+            m_InUse.push_back(pconn);
+            break;
+        case Closed:
+            action = "CLOSED. ";
+                m_CurrentlyOpened.remove(pconn);
+                m_InUse.remove(pconn);
+            break;       
+        }
+
+
+        std::ostringstream os;
+        ConnList::iterator i;
+        ConnList::iterator e;
+
+        i = m_EverOpened.begin();
+        e = m_EverOpened.end();
+        os << "\nCONNECTIONS EVER OPENED:";
+        for (; i != e; ++i)
+            os << "{" << i->get() << "}";
+
+        i = m_CurrentlyOpened.begin();
+        e = m_CurrentlyOpened.end();
+        os << "\nCONNECTIONS CURRENTLY OPENED:";
+        for (; i != e; ++i)
+            os << "{" << i->get() << "}";
+
+        i = m_InUse.begin();
+        e = m_InUse.end();
+        os << "\nCONNECTIONS IN USE:";
+        for (; i != e; ++i)
+            os << "{" << i->get() << "}";
+
+        i = m_connCache.begin();
+        e = m_connCache.end();
+        os << "\nCONNECTIONS IN CACHE:";
+        for (; i != e; ++i)
+            os << "{" << i->get() << "}";
+
+        LOG4CPLUS_INFO(m_log, "CONNECTION{" << pconn.get() 
+            << "} " << action << "Max Opened {{{" << m_EverOpened.size()
+            << "}}}, Currently opened {{{" << m_CurrentlyOpened.size()  
+            << "}}}, In Use {{{" << m_InUse.size() 
+            << "}}}, In Cache {{{" << m_connCache.size() << "}}}");
+        LOG4CPLUS_INFO(m_log, os.str());
+    }
+
+
+
 /// @}
 
 /// @name Dump tools
@@ -3359,6 +3604,7 @@ private:
     log4cplus::Logger m_log; ///< @brief The HTTP logger.
     NameCache m_nameCache; ///< @brief The local DNS name cache.
     size_t m_conn_lifetime; ///< @brief The life time for cached connection in idle state in minutes.
+    http::Url m_proxyUrl; ///< @brief The proxy server URL
 
 #if !defined(HIVE_DISABLE_SSL)
     /// @brief The SSL context.
@@ -3372,6 +3618,12 @@ private:
     /// @brief The connection list type.
     typedef std::list<ConnectionPtr> ConnList;
     ConnList m_connCache; ///< @brief The connection cache.
+
+    ConnList m_CurrentlyOpened;
+    ConnList m_EverOpened; 
+    ConnList m_InUse; 
+
+    size_t m_maxOpenedConn;
 };
 
 /// @brief The HTTP client shared pointer type.
