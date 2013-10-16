@@ -1900,7 +1900,7 @@ protected:
     @param[in] logger The instance of log4cplus logger.
     @param[in] name The client name.
     */
-    explicit Client(IOService &ios, const log4cplus::Logger& logger, http::Url const& proxy = http::Url(), String const& name = String(), size_t conn_lifetime = 30)
+    explicit Client(IOService &ios, const log4cplus::Logger& logger, http::Url const& proxy = http::Url(), String const& name = String(), size_t conn_lifetime = 10)
         : m_ios(ios)
         , m_log(logger)
         , m_nameCache(10*60000) // 10 minutes
@@ -2312,7 +2312,7 @@ private:
                                : String();
             if (!boost::iequals(hconn, "close")) // TODO: or boost::iequals(hconn, "keep-alive")
             {
-                m_connCache.push_back(pconn);
+                m_connCache.push_front(pconn);
                 LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
                     << "} - keep-alive Connection{"
                     << pconn.get() << "} is cached. Cache size is " << m_connCache.size());
@@ -3169,7 +3169,15 @@ public:
             m_InUse.push_back(pconn);
 
             if(m_maxOpenedConn < m_CurrentlyOpened.size())
+            {
                 m_maxOpenedConn = m_CurrentlyOpened.size();
+                LOG4CPLUS_INFO(m_log, "NEW MAXIMUM OF OPENED CONNECTIONS DETECTED: " << m_maxOpenedConn << " opened connections");
+            }
+            else if (m_maxOpenedConn == m_CurrentlyOpened.size())
+            {
+                LOG4CPLUS_INFO(m_log, "PREVIOUS MAXIMUM REACHED: " << m_maxOpenedConn << " opened connections");           
+            }
+
             break;
 
         case Stored:
@@ -3218,7 +3226,8 @@ public:
             os << "{" << i->get() << "}";
 
         LOG4CPLUS_INFO(m_log, "CONNECTION{" << pconn.get() 
-            << "} " << action << "Max Opened {{{" << m_EverOpened.size()
+            << "} " << action << "Ever Opened {{{" << m_EverOpened.size()
+            << "}}}, Max opened {{{" << m_maxOpenedConn  
             << "}}}, Currently opened {{{" << m_CurrentlyOpened.size()  
             << "}}}, In Use {{{" << m_InUse.size() 
             << "}}}, In Cache {{{" << m_connCache.size() << "}}}");
