@@ -1900,7 +1900,7 @@ protected:
     @param[in] logger The instance of log4cplus logger.
     @param[in] name The client name.
     */
-    explicit Client(IOService &ios, const log4cplus::Logger& logger, http::Url const& proxy = http::Url(), String const& name = String(), size_t conn_lifetime = 10)
+    explicit Client(IOService &ios, const log4cplus::Logger& logger, http::Url const& proxy = http::Url(), String const& name = String(), size_t conn_lifetime = 1)
         : m_ios(ios)
         , m_log(logger)
         , m_nameCache(10*60000) // 10 minutes
@@ -1937,9 +1937,9 @@ public:
     @param[in] name The optional client name.
     @return The new client instance.
     */
-    static SharedPtr create(IOService &ios, const log4cplus::Logger& logger, http::Url const& proxy = http::Url(), String const& name = String())
+    static SharedPtr create(IOService &ios, const log4cplus::Logger& logger, http::Url const& proxy = http::Url(), String const& name = String(), size_t conn_lifetime = 1)
     {
-        return SharedPtr(new Client(ios, logger, proxy, name));
+        return SharedPtr(new Client(ios, logger, proxy, name, conn_lifetime));
     }
 
 public:
@@ -3034,9 +3034,9 @@ private:
         LOG4CPLUS_DEBUG(m_log, "Connection{" << pconn.get()
             << "} start async receiving (keep-alive monitor)");
 
-        if (!pconn->m_timer_started)
+        if (!pconn->m_timer_started && m_conn_lifetime) //m_conn_lifetime == 0 - no expiration time. Connection will not be closed.
         {
-            pconn->m_idle_lifetimer.expires_from_now(boost::posix_time::milliseconds(1000 * 60 * m_conn_lifetime));
+            pconn->m_idle_lifetimer.expires_from_now(boost::posix_time::milliseconds(1000 * m_conn_lifetime));
             pconn->m_idle_lifetimer.async_wait(boost::bind(&Client::onKeepAliveConnectionTimedOut, 
                 shared_from_this(), pconn, boost::asio::placeholders::error));
             pconn->m_timer_started = true;
@@ -3612,7 +3612,7 @@ private:
     IOService &m_ios; ///< @brief The IO service.
     log4cplus::Logger m_log; ///< @brief The HTTP logger.
     NameCache m_nameCache; ///< @brief The local DNS name cache.
-    size_t m_conn_lifetime; ///< @brief The life time for cached connection in idle state in minutes.
+    size_t m_conn_lifetime; ///< @brief The life time for cached connection in idle state in seconds.
     http::Url m_proxyUrl; ///< @brief The proxy server URL
 
 #if !defined(HIVE_DISABLE_SSL)
