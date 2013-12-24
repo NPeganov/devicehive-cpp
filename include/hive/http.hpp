@@ -1578,8 +1578,8 @@ private:
 
 public:
     typedef boost::asio::deadline_timer Timer;       ///< @brief The timer type.
-    bool m_timer_started; ///< @brief The timer "started" flag.
     Timer m_idle_lifetimer;    ///< @brief The deadline timer.
+    bool m_timer_started; ///< @brief The timer "started" flag.
 };
 
 /// @brief The HTTP connection shared pointer type.
@@ -1906,10 +1906,10 @@ protected:
         , m_nameCache(10*60000) // 10 minutes
         , m_conn_lifetime(conn_lifetime)
         , m_proxyUrl(proxy)
-        , m_maxOpenedConn(0)
 #if !defined(HIVE_DISABLE_SSL)
         , m_context(boost::asio::ssl::context::sslv23)
 #endif // HIVE_DISABLE_SSL
+        , m_maxOpenedConn(0)
     {
         LOG4CPLUS_TRACE(m_log, "created");
     }
