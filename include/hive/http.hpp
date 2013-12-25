@@ -2316,8 +2316,9 @@ private:
                 LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
                     << "} - keep-alive Connection{"
                     << pconn.get() << "} is cached. Cache size is " << m_connCache.size());
-
+#ifndef NDEBUG  
                 LoggConnEvent(pconn, Client::Stored);
+#endif
 
                 asyncStartKeepAliveMonitor(pconn);
             }
@@ -2367,7 +2368,9 @@ private:
         {
             LOG4CPLUS_INFO(m_log, "Task{" << task.get() << "} timed out");
             task->cancel();
+#ifndef NDEBUG  
             LoggConnEvent(task->takeConnection(), Client::Closed);
+#endif
             done(task, boost::asio::error::timed_out);
         }
         else if (boost::asio::error::operation_aborted == err)
@@ -2592,8 +2595,9 @@ private:
             LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
                 << "} got Connection{" << task->m_connection.get()
                 << "} from cache!");
-
+#ifndef NDEBUG  
             LoggConnEvent(task->m_connection, Client::Loaded);
+#endif
 
             m_ios.post(boost::bind(&Client::onHandshaked, shared_from_this(),
                 task, boost::system::error_code(), false));
@@ -2633,8 +2637,9 @@ private:
 
             bool handshakeForProxy = !m_proxyUrl.toStr().empty();
             asyncHandshake(task, handshakeForProxy);
-
+#ifndef NDEBUG  
             LoggConnEvent(task->m_connection, Client::Established);
+#endif
         }
         else if (task->m_cancelled)
         {
@@ -3084,7 +3089,9 @@ private:
             pconn->cancel();
             pconn->close();
             m_connCache.remove(pconn);
+#ifndef NDEBUG  
             LoggConnEvent(pconn, Client::Closed);
+#endif
         }
     }
 /// @}
@@ -3112,7 +3119,9 @@ private:
                 pconn->cancel();
                 pconn->close();
                 m_connCache.remove(pconn);
+#ifndef NDEBUG  
                 LoggConnEvent(pconn, Client::Closed);
+#endif
             }
         }
         else if (boost::asio::error::operation_aborted == err)
@@ -3150,15 +3159,17 @@ public:
 
     void LoggConnEventT(TaskPtr ptask, ConnEvent Event)    
     {
+#ifndef NDEBUG  
         if (ptask->getConnection())
         {
             LoggConnEvent(ptask->getConnection(), Event);        
         }
+#endif
     }
 
     void LoggConnEvent(ConnectionPtr pconn, ConnEvent Event)    
     {
-    
+#ifndef NDEBUG     
         String action;
         switch (Event)
         {
@@ -3197,7 +3208,6 @@ public:
             break;       
         }
 
-
         std::ostringstream os;
         ConnList::iterator i;
         ConnList::iterator e;
@@ -3233,6 +3243,7 @@ public:
             << "}}}, In Use {{{" << m_InUse.size() 
             << "}}}, In Cache {{{" << m_connCache.size() << "}}}");
         LOG4CPLUS_INFO(m_log, os.str());
+#endif
     }
 
 
