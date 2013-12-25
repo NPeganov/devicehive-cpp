@@ -2912,7 +2912,8 @@ private:
 
             if (parseHeaders(buf_beg, buf_end, task->response))
             {
-                const String len_s = task->response->getHeader(header::Content_Length);
+                String len_s = task->response->getHeader(header::Content_Length);
+                len_s.erase(remove(len_s.begin(), len_s.end(), ' '), len_s.end());
                 if (!len_s.empty())
                     task->m_rx_len = boost::lexical_cast<size_t>(len_s);
 
