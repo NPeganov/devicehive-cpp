@@ -1909,7 +1909,9 @@ protected:
 #if !defined(HIVE_DISABLE_SSL)
         , m_context(boost::asio::ssl::context::sslv23)
 #endif // HIVE_DISABLE_SSL
+#ifdef _DEBUG  
         , m_maxOpenedConn(0)
+#endif
     {
         LOG4CPLUS_TRACE(m_log, "created");
     }
@@ -2316,7 +2318,7 @@ private:
                 LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
                     << "} - keep-alive Connection{"
                     << pconn.get() << "} is cached. Cache size is " << m_connCache.size());
-#ifndef NDEBUG  
+#ifdef _DEBUG  
                 LoggConnEvent(pconn, Client::Stored);
 #endif
 
@@ -2368,7 +2370,7 @@ private:
         {
             LOG4CPLUS_INFO(m_log, "Task{" << task.get() << "} timed out");
             task->cancel();
-#ifndef NDEBUG  
+#ifdef _DEBUG  
             LoggConnEvent(task->takeConnection(), Client::Closed);
 #endif
             done(task, boost::asio::error::timed_out);
@@ -2595,7 +2597,7 @@ private:
             LOG4CPLUS_DEBUG(m_log, "Task{" << task.get()
                 << "} got Connection{" << task->m_connection.get()
                 << "} from cache!");
-#ifndef NDEBUG  
+#ifdef _DEBUG  
             LoggConnEvent(task->m_connection, Client::Loaded);
 #endif
 
@@ -2637,7 +2639,7 @@ private:
 
             bool handshakeForProxy = !m_proxyUrl.toStr().empty();
             asyncHandshake(task, handshakeForProxy);
-#ifndef NDEBUG  
+#ifdef _DEBUG  
             LoggConnEvent(task->m_connection, Client::Established);
 #endif
         }
@@ -3089,7 +3091,7 @@ private:
             pconn->cancel();
             pconn->close();
             m_connCache.remove(pconn);
-#ifndef NDEBUG  
+#ifdef _DEBUG   
             LoggConnEvent(pconn, Client::Closed);
 #endif
         }
@@ -3119,7 +3121,7 @@ private:
                 pconn->cancel();
                 pconn->close();
                 m_connCache.remove(pconn);
-#ifndef NDEBUG  
+#ifdef _DEBUG   
                 LoggConnEvent(pconn, Client::Closed);
 #endif
             }
@@ -3159,7 +3161,7 @@ public:
 
     void LoggConnEventT(TaskPtr ptask, ConnEvent Event)    
     {
-#ifndef NDEBUG  
+#ifdef _DEBUG  
         if (ptask->getConnection())
         {
             LoggConnEvent(ptask->getConnection(), Event);        
@@ -3167,9 +3169,10 @@ public:
 #endif
     }
 
+
+#ifdef _DEBUG
     void LoggConnEvent(ConnectionPtr pconn, ConnEvent Event)    
-    {
-#ifndef NDEBUG     
+    {     
         String action;
         switch (Event)
         {
@@ -3243,9 +3246,8 @@ public:
             << "}}}, In Use {{{" << m_InUse.size() 
             << "}}}, In Cache {{{" << m_connCache.size() << "}}}");
         LOG4CPLUS_INFO(m_log, os.str());
-#endif
     }
-
+#endif
 
 
 /// @}
@@ -3639,12 +3641,13 @@ private:
     /// @brief The connection list type.
     typedef std::list<ConnectionPtr> ConnList;
     ConnList m_connCache; ///< @brief The connection cache.
-
+#ifdef _DEBUG  
     ConnList m_CurrentlyOpened;
     ConnList m_EverOpened; 
     ConnList m_InUse; 
 
     size_t m_maxOpenedConn;
+#endif
 };
 
 /// @brief The HTTP client shared pointer type.
