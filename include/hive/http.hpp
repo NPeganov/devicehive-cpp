@@ -1179,12 +1179,14 @@ public:
         writeFirstLine(os);
         writeAllHeaders(os);
 
+/*
         if (!hasHeader(header::Host))
         {
             os << header::Host << ": "
                 << getUrl().toStr(Url::HOST|Url::PORT)
                 << impl::CRLF;
         }
+*/
 
         writeContent(os);
         return os;
