@@ -3039,16 +3039,29 @@ private:
     {
         LOG4CPLUS_TRACE(m_log, "asyncStartKeepAliveMonitor(pconn)");
 
-        LOG4CPLUS_DEBUG(m_log, "Connection{" << pconn.get()
-            << "} start async receiving (keep-alive monitor)");
+        if(!m_conn_lifetime)
+        {
+            LOG4CPLUS_DEBUG(m_log, "Connection{" << pconn.get()
+                << "} closing the connection since its' lifetime (after the usage) is 0 seconds.");
 
-        if (!pconn->m_timer_started && m_conn_lifetime) //m_conn_lifetime == 0 - no expiration time. Connection will not be closed.
+            pconn->cancel();
+            pconn->close();
+            m_connCache.remove(pconn);
+#ifdef _DEBUG   
+            LoggConnEvent(pconn, Client::Closed);
+#endif        
+            return;
+        }
+        else if (!pconn->m_timer_started && m_conn_lifetime)
         {
             pconn->m_idle_lifetimer.expires_from_now(boost::posix_time::milliseconds(1000 * m_conn_lifetime));
             pconn->m_idle_lifetimer.async_wait(boost::bind(&Client::onKeepAliveConnectionTimedOut, 
                 shared_from_this(), pconn, boost::asio::placeholders::error));
             pconn->m_timer_started = true;
         }
+
+        LOG4CPLUS_DEBUG(m_log, "Connection{" << pconn.get()
+            << "} start async receiving (keep-alive monitor)");
 
         static char dummy = 0;
         boost::asio::async_read(*pconn, boost::asio::buffer(&dummy, 1),
