@@ -1279,8 +1279,13 @@ private:
             HIVELOG_DEBUG(m_log, "final frame confirmed, report to user");
             if (callback)
             {
-                m_trx->getStream().get_io_service().post(
-                    boost::bind(callback, err, msg));
+                if (m_trx)
+                {
+                    m_trx->getStream().get_io_service().post(
+                        boost::bind(callback, err, msg));
+                }
+                else // call directly
+                    callback(err, msg);
             }
         }
         else
@@ -1303,8 +1308,13 @@ private:
         if (m_recvMsgCallback)
         {
             HIVELOG_DEBUG(m_log, "report message to user");
-            m_trx->getStream().get_io_service().post(
-                boost::bind(m_recvMsgCallback, err, msg));
+            if (m_trx)
+            {
+                m_trx->getStream().get_io_service().post(
+                    boost::bind(m_recvMsgCallback, err, msg));
+            }
+            else // call directly
+                m_recvMsgCallback(err, msg);
         }
         else
             HIVELOG_WARN(m_log, "no callback, message ignored");
@@ -1359,8 +1369,13 @@ private:
 
         if (callback)
         {
-            m_trx->getStream().get_io_service().post(
-                boost::bind(callback, err, frame));
+            if (m_trx)
+            {
+                m_trx->getStream().get_io_service().post(
+                    boost::bind(callback, err, frame));
+            }
+            else // call directly
+                callback(err, frame);
         }
     }
 
@@ -1382,8 +1397,13 @@ private:
 
             if (m_recvFrameCallback)
             {
-                m_trx->getStream().get_io_service().post(
-                    boost::bind(m_recvFrameCallback, err, frame));
+                if (m_trx)
+                {
+                    m_trx->getStream().get_io_service().post(
+                        boost::bind(m_recvFrameCallback, err, frame));
+                }
+                else // call directly
+                    m_recvFrameCallback(err, frame);
                 frame_processed = true;
             }
 
@@ -1468,8 +1488,13 @@ private:
 
             if (m_recvFrameCallback)
             {
-                m_trx->getStream().get_io_service().post(
-                    boost::bind(m_recvFrameCallback, err, Frame::SharedPtr()));
+                if (m_trx)
+                {
+                    m_trx->getStream().get_io_service().post(
+                        boost::bind(m_recvFrameCallback, err, Frame::SharedPtr()));
+                }
+                else // call directly
+                    m_recvFrameCallback(err, Frame::SharedPtr());
             }
 
             doRecvMessage(err, Message::SharedPtr());
