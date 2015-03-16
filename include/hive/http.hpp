@@ -2522,6 +2522,10 @@ private:
         for (; i != e; ++i)
         {
             ConnectionPtr pconn = *i;
+
+            try
+            {
+
             if (pconn->remote_endpoint() == endpoint)
             {
 #if !defined(HIVE_DISABLE_SSL)
@@ -2544,6 +2548,13 @@ private:
                         return pconn;
                     }
                 }
+            }
+
+            }
+            catch (const boost::system::system_error &ex)
+            {
+                LOG4CPLUS_WARN(m_log, "failed to access Connection{"
+                    << pconn.get() << "}, ignored");
             }
         }
 
